@@ -9,26 +9,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 #End of Imports
 #------------------------------------------------------------------
-#TASK 1 [5 Marks] - Normalise equations for ion motion
-#starting equation: dvi/dx = (e/mi*vi)*E - vi/L
-#vi = vi_hat * cs
-#x = x_hat * lambda
-#E = E_hat * Te/lambda
-#L = L_hat * lambda
-#cs=sqrt(e*Te/mi)
 
-#Substituting in:
-#dvi_hat/dx_hat * (cs/lambda) = (e/mi)*(1/vi_hat * cs)*(Te/lambda)*E_hat - (vi_hat/L_hat)*(cs/lambda)
-
-#A factor of 1/lambda can be cancelled from both sides
-#Takin cs from LHS to RHS give:
-#dvi_hat/dx_hat = (1/cs**2)*(e*Te/mi)*(E_hat/vi_hat) - (vi_hat/L_hat)
-#converting breaking down cs**2 cancels out the other physical constants:
-
-#Result:
-#dvi_hat/dx_hat = (E_hat/vi_hat) - (vi_hat/L_hat)
-#dv/dx = f(v,x) = E/v - v/L
-#------------------------------------------------------------------
 #Functions
 def getF(phi,vs):
     N=len(phi) ; F = zeros(N)

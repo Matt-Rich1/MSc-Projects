@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # Electrostatic PIC code in a 1D cyclic domain
 
-from numpy import arange, concatenate, zeros, linspace, floor, array, pi, savetxt, column_stack, loadtxt
-from numpy import sin, cos, sqrt, random, histogram, abs, sqrt, max, exp, interp, polyfit, poly1d, log10, mean, diff
+from numpy import arange, concatenate, zeros, linspace, floor, array, pi, savetxt, column_stack, loadtxt, append
+from numpy import sin, cos, sqrt, random, histogram, abs, sqrt, max, exp, interp, polyfit, poly1d, log10, mean, diff, tanh
 
 import matplotlib.pyplot as plt # Matplotlib plotting library
 
 from scipy.interpolate import interp1d
 
 from scipy.optimize import curve_fit
+
+from scipy.stats import norm, describe
 
 import time
 
@@ -282,7 +284,6 @@ class Summary:
         peaks_times = t[peaks_indices]
 
         return peaks, times, peaks_times
-        
 
 
     def freq_calc(self):
@@ -365,7 +366,45 @@ class Summary:
 
         #plt.errorbar(ncells, noise, noise*error)
 
-        return noise
+        return noise, error
+
+
+    def growth_rate(self):
+        data = loadtxt('firstharmonic.txt')
+    
+    # Split data into time and amplitude
+        t = data[:, 0]
+        A = data[:, 1]
+
+        peaks = self.peak_amplitude()[0]
+        times = self.peak_amplitude()[1]
+
+        #       TANH FITTING
+        def tanh_fit(times, *params):
+            a2 = params[0]
+            a0 = params[1]
+            a1 = params[2]
+            t0 = params[3]
+
+            return (a2 + a0 * tanh(a1 * (times - t0)))
+        
+        guess2 = [peaks[-1], peaks[0], max(peaks)/min(peaks), times[-1]/2]
+        popt_2, pcov_2 = curve_fit(tanh_fit, times, peaks, p0=guess2)
+        yfit2 = (tanh_fit, *popt_2)
+
+        yfit2_2 = popt_2[0] + popt_2[1] * tanh(popt_2[2] * (t - popt_2[3]))
+
+        y0 = 1.025 * (popt_2[0] - popt_2[1])
+        y1 = 0.975 * (popt_2[0] + popt_2[1])
+
+        x_start = interp(y0, yfit2_2, t)
+        x_end = interp(y1, yfit2_2, t)
+
+        Growth_Rate = (y1-y0) / (x_end - x_start)
+        error = self.noise_calc()[1]
+
+        return Growth_Rate
+                
 
 
 ####################################################################
@@ -389,15 +428,32 @@ def landau(npart, L, alpha=0.2):
     
     return pos, vel
 
-def twostream(npart, L, vbeam=2):
+def twostream(npart, L, vbeam):
     # Start with a uniform distribution of positions
     pos = random.uniform(0., L, npart)
     # Normal velocity distribution
-    vel = random.normal(0.0, 1.0, npart)
+    vel = random.normal(0.0, 0.1, npart)
     
     np2 = int(npart / 2)
     vel[:np2] += vbeam  # Half the particles moving one way
     vel[np2:] -= vbeam  # and half the other
+    
+    return pos,vel
+
+def bump(npart, L, vbump, fraction_bump):
+    
+    npart_bump = int(npart * fraction_bump)
+    npart_bulk = npart - npart_bump
+    
+    # Start with a uniform distribution of positions
+    pos = random.uniform(0., L, npart)
+    
+    # Normal velocity distribution
+    vel_bulk = random.normal(0., 1., npart_bulk)
+
+    #Note we have a beam so assume smaller width
+    vel_bump = random.normal(vbump, .2, npart_bump)       
+    vel = append(vel_bulk, vel_bump)
     
     return pos,vel
 
@@ -406,81 +462,98 @@ def twostream(npart, L, vbeam=2):
 if __name__ == "__main__":
     # Generate initial condition
     #
-    npart = 9000
-    ncells = 18
-    L = 72
+    npart = 10000
+    ncells = 20
+    L = 100
+    vbeam = 1
     freq = []
     dr = []
     noise = []
+    growth_rates = []
     start_time = time.time()
-    
-    if True:
+
+
+    if False:
         # 2-stream instability
         L = int(L)
-        pos, vel = twostream(npart, L, 3.) # Might require more npart than Landau!
-    else:
+        vbeam = int(vbeam)
+        pos, vel = twostream(npart, L, vbeam) # Might require more npart than Landau!
+    if False:
         # Landau damping
         L = float(L*pi/100)
         pos, vel = landau(npart, L)
+    else:
+        L=int(L)
+        vbump = 3
+        fraction_bump = 0.1
+        pos, vel = bump(npart, L, vbump, fraction_bump)
+
     
     # Create some output classes
-    p = Plot(pos, vel, ncells, L) # This displays an animated figure - Slow!
+    #p = Plot(pos, vel, ncells, L) # This displays an animated figure - Slow!
     s = Summary()                 # Calculates, stores and prints summary info
 
-    diagnostics_to_run = [p, s]   # Remove p to get much faster code!
+    diagnostics_to_run = [ s]   # Remove p to get much faster code!
 
     
     # Run the simulation
 
     pos, vel = run(pos, vel, L, ncells, 
                    out = diagnostics_to_run,        # These are called each output step
-                    output_times=linspace(0.,20,50)) # The times to output
+                    output_times=linspace(0.,200,100)) # The times to output
 
     s.save_to_file()  # Save data to file
     s.extract_peaks()  # Find peaks and the first increasing peak
     s.freq_calc()
     s.dr_calc()
     s.noise_calc()
+    #s.growth_rate()
 
     freq_value = s.freq_calc()[0]
     dr_value = s.dr_calc()[0]
-    noise_value = s.noise_calc()
+    noise_value = s.noise_calc()[0]
+    #growth_rate_values = s.growth_rate()
 
     freq.append(freq_value)
     dr.append(dr_value)
     noise.append(abs(noise_value))
-
-        
+    #growth_rates.append(growth_rate_values)
 
     end_time = time.time()
 
     duration = end_time - start_time
-    print('duration=',duration) 
+    print('duration=',duration)
 
     # Summary stores an array of the first-harmonic amplitude
 ##############################################################################################
     #LIVE PLOT FIGURE
-    plt.figure()
+    #plt.figure()
 ############################################################################################
 #SIGNAL SPLITTING
-
-##    data = loadtxt('firstharmonic.txt')
+    data = loadtxt('firstharmonic.txt')
 ####    
-##    # Split data into time and amplitude
-##    t = data[:, 0]
-##    A = data[:, 1]
-##    Amp = A[0]; dr = s.dr_calc()[0]; freq = s.freq_calc()[0]; w = 2*3.14159 * freq
-##    signal = (Amp * (exp(-(dr*t))) * cos(w*t))
+    # Split data into time and amplitude
+    t = data[:, 0]
+    A = data[:, 1]
+    
+    peaks = s.peak_amplitude()[0]
+    times = s.peak_amplitude()[1]
+    
+    Amp = A[0]; dr = s.dr_calc()[0]; freq = s.freq_calc()[0]; w = 2*3.14159 * freq
+    signal = (Amp * (exp(-(dr*t))) * cos(w*t))
 ######
-##    freq_err = s.freq_calc()[1]
-##    dr_err = s.dr_calc()[1]
+    freq_err = s.freq_calc()[1]
+    dr_err = s.dr_calc()[1]
 ####    
-##    error = sqrt(dr_err**2 + freq_err**2)
-##    error_tot = 100*error
-####
-##    plt.plot(t, A, '-k', linewidth=2.0, label='data')    
-##    plt.plot(t, signal, '-o', markersize=0.1, label = u'signal, w={:.3f}, dr={:.3f}, Δ={:.2f}% '.format(w,dr,error_tot), linewidth=1.0)
-##    plt.fill_between(t, signal*(1+error), signal*(1-error))
+    error = sqrt(dr_err**2 + freq_err**2)
+    error_tot = 100*error
+################################################################################################
+##    VELOCITY DISTRIBUTION
+
+    _, initial_vel = bump(npart, L, vbump, 0)   # No bump in the initial state
+    _, final_vel = bump(npart, L, vbump, fraction_bump)
+    bins = linspace(-5, 5, 100)  # Define bins for the histogram
+
 ########################################################################################################################################    
 ##ANALYTICAL SOLUTIONS
 ##    analytical1 = A[0] * exp(-0.153 * t) * cos(1.416 * t)
@@ -493,6 +566,8 @@ if __name__ == "__main__":
 ##    plt.plot(t, analytical1, markersize=0.1, label = 'w=1.416, dr=0.153', linewidth=1.0)
 ##########################################################################################################################################
 ## FITTING FUNCTIONS
+
+##          LOG FITTING 
 ##    def log_fit(ncells_values, *params):
 ##        a = params[0]
 ##        b = params[1]
@@ -508,7 +583,9 @@ if __name__ == "__main__":
 ##    plt.plot(ncells_values, yfit, '-', label=f'''Log Fit: y = {popt[0]:.2f} + {popt[1]:.2f} + log(x - {popt[2]:.2f});
 ##                                            square residual = {log_R_squared}''')
 ##
-##    
+
+    
+##          LINEAR FITTING   
 ##    def linear_fit(ncells_values, *params):
 ##        c = params[0]
 ##        m = params[1]
@@ -523,18 +600,53 @@ if __name__ == "__main__":
 ##
 ##    plt.plot(ncells_values, yfit1, '-', label=f'''Linear Fit: y = {popt_1[0]:.2f} * (x - {popt_1[1]:.2f}) + {popt_1[2]:.2f};
 ##             square residual = {lin_R_squared}''')
+
+
+##        #       TANH FITTING
+##        def tanh_fit(times, *params):
+##            a2 = params[0]
+##            a0 = params[1]
+##            a1 = params[2]
+##            t0 = params[3]
+##
+##            return (a2 + a0 * tanh(a1 * (times - t0)))
+##        
+##        guess2 = [peaks[-1], peaks[0], max(peaks)/min(peaks), times[-1]/2]
+##        popt_2, pcov_2 = curve_fit(tanh_fit, times, peaks, p0=guess2)
+##        yfit2 = (tanh_fit, *popt_2)
+
+##
+##    plt.plot(times, yfit2, '-', label=f'''Start Time = {x_start:.2f}; End Time ={x_end:.2f} .
+##    Fitting Eqn: y = a + b*tanh(c*(t -t0))
+##    Growth Rate = {Growth_Rate:.4f} ''')
+
+##              GAUSSIAN FITTING
+    mean, stddev = norm.fit(final_vel)
+    pdf = norm.pdf(bins, mean, stddev)  # Gaussian PDF with fitted parameters
+
+############################################################################################   
+##    plt.plot(t, A, '-k', linewidth=2.0, label='data')    
+##    plt.plot(t, signal, '-o', markersize=0.1, label = u'signal, w={:.3f}, dr={:.3f}, Δ={:.2f}% '.format(w,dr,error_tot), linewidth=1.0)
+##    plt.fill_between(t, signal*(1+error), signal*(1-error))
 ############################################################################################################################################
 ##PHYSICAL DEPENDENCE OF SYSTEM SIZES
 ##    plt.plot(L_values, noise, '-o', label='noise')
 ##    plt.plot(L_values, dr, '-o', label='damping rate')
 ##    plt.plot(L_values, freq, '-o', label='freq')
 ##########################################################################################################
+    # PLOTTING VELOCITY DISTRIBUTIONS
+    plt.hist(initial_vel, bins, alpha=0.7, label='Initial Velocity Distribution', density=True, color='blue')
+    plt.hist(final_vel, bins, alpha=0.7, label='Final Velocity Distribution', density=True, color='orange')
+    plt.plot(bins, pdf, 'r-', label=f'Gaussian Fit\nMean = {mean:.2f}, Stddev = {stddev:.2f}')
+##########################################################################################################
+
 ##PLOTTING
-    plt.plot(s.t, s.firstharmonic, '-k', label='first harmonic')
-    plt.yscale('log')
-    plt.xlabel("time")
-    plt.ylabel("Amplitude [Normalised]")
+##    plt.plot(s.t, s.firstharmonic, '-k', label='first harmonic')
+##    plt.yscale('log')
+    plt.xlabel("Beam Velocity")
+    plt.ylabel("Probability Density")
     plt.legend()
-    plt.ioff() # This so that the windows stay open
+    plt.grid(True)
+    #plt.ioff() # This so that the windows stay open
     plt.show()
 ##    
